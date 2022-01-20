@@ -109,7 +109,12 @@ void fz_new_colorspace_context(fz_context *ctx)
 
 void fz_enable_icc(fz_context *ctx)
 {
-	fz_warn(ctx, "ICC support is not available");
+	static int warned = 0;
+
+	if (!warned) {
+		fz_warn(ctx, "ICC support is not available");
+		warned = 1;
+	}
 }
 
 void fz_disable_icc(fz_context *ctx)
