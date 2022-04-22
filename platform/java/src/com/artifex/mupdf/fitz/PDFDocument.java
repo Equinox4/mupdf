@@ -1,4 +1,4 @@
-// Copyright (C) 2004-2021 Artifex Software, Inc.
+// Copyright (C) 2004-2022 Artifex Software, Inc.
 //
 // This file is part of MuPDF.
 //
@@ -21,6 +21,9 @@
 // CA 94945, U.S.A., +1(415)492-9861, for further information.
 
 package com.artifex.mupdf.fitz;
+
+import java.io.InputStream;
+import java.util.Date;
 
 public class PDFDocument extends Document
 {
@@ -146,7 +149,23 @@ public class PDFDocument extends Document
 	}
 
 	public interface JsEventListener {
-		void onAlert(String message);
+		public static final int BUTTON_GROUP_OK = 0;
+		public static final int BUTTON_GROUP_OK_CANCEL = 1;
+		public static final int BUTTON_GROUP_YES_NO = 2;
+		public static final int BUTTON_GROUP_YES_NO_CANCEL = 3;
+
+		public static final int BUTTON_NONE = 0;
+		public static final int BUTTON_OK = 1;
+		public static final int BUTTON_CANCEL = 2;
+		public static final int BUTTON_NO = 3;
+		public static final int BUTTON_YES = 4;
+
+		public static class AlertResult {
+			public int buttonPressed;
+			public boolean checkboxChecked;
+		}
+
+		public AlertResult onAlert(PDFDocument doc, String title, String message, int iconType, int buttonGroupType, String checkboxMessage, boolean checkboxState);
 	}
 	public native void enableJs();
 	public native void disableJs();
@@ -189,4 +208,36 @@ public class PDFDocument extends Document
 
 	public native int getLanguage();
 	public native void setLanguage(int lang);
+
+	public native int countSignatures();
+
+	public native PDFObject addEmbeddedFile(String filename, String mimetype, Buffer contents, long created, long modified, boolean addChecksum);
+	public native PDFEmbeddedFileParams getEmbeddedFileParams(PDFObject fs);
+	public native Buffer loadEmbeddedFileContents(PDFObject fs);
+	public native boolean verifyEmbeddedFileChecksum(PDFObject fs);
+
+	public PDFObject addEmbeddedFile(String filename, String mimetype, InputStream stream, Date created, Date modified, boolean addChecksum) {
+		Buffer contents = new Buffer();
+		contents.writeFromStream(stream);
+		long createdTime = created != null ? created.getTime() : -1;
+		long modifiedTime = modified != null ? modified.getTime() : -1;
+		return addEmbeddedFile(filename, mimetype, contents, createdTime, modifiedTime, addChecksum);
+	}
+
+	public static class PDFEmbeddedFileParams {
+		public final String filename;
+		public final String mimetype;
+		public final int size;
+		public final Date creationDate;
+		public final Date modificationDate;
+
+		protected PDFEmbeddedFileParams(String filename, String mimetype, int size, long created, long modified) {
+			this.filename = filename;
+			this.mimetype = mimetype;
+			this.size = size;
+			this.creationDate = new Date(created);
+			this.modificationDate = new Date(modified);
+		}
+	}
+
 }

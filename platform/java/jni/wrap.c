@@ -1,4 +1,4 @@
-// Copyright (C) 2004-2021 Artifex Software, Inc.
+// Copyright (C) 2004-2022 Artifex Software, Inc.
 //
 // This file is part of MuPDF.
 //
@@ -200,6 +200,20 @@ static inline jfloatArray to_floatArray(fz_context *ctx, JNIEnv *env, const floa
 
 /* Conversion functions: C to Java. None of these throw fitz exceptions. */
 
+static inline jobject to_Buffer_safe(fz_context *ctx, JNIEnv *env, fz_buffer *buf)
+{
+	jobject jbuf;
+
+	if (!ctx || !buf) return NULL;
+
+	fz_keep_buffer(ctx, buf);
+	jbuf = (*env)->NewObject(env, cls_Buffer, mid_Buffer_init, jlong_cast(buf));
+	if (!jbuf)
+		fz_drop_buffer(ctx, buf);
+
+	return jbuf;
+}
+
 static inline jint to_ColorParams_safe(fz_context *ctx, JNIEnv *env, fz_color_params cp)
 {
 	if (!ctx) return 0;
@@ -342,6 +356,20 @@ static inline jobject to_PDFAnnotation_safe(fz_context *ctx, JNIEnv *env, pdf_an
 		pdf_drop_annot(ctx, annot);
 
 	return jannot;
+}
+
+static inline jobject to_PDFDocument_safe(fz_context *ctx, JNIEnv *env, pdf_document *pdf)
+{
+	jobject jpdf;
+
+	if (!ctx || !pdf) return NULL;
+
+	pdf_keep_document(ctx, pdf);
+	jpdf = (*env)->NewObject(env, cls_PDFDocument, mid_PDFDocument_init, jlong_cast(pdf));
+	if (!jpdf)
+		pdf_drop_document(ctx, pdf);
+
+	return jpdf;
 }
 
 static inline jobject to_PDFObject_safe(fz_context *ctx, JNIEnv *env, pdf_obj *obj)

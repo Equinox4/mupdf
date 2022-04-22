@@ -1,4 +1,4 @@
-// Copyright (C) 2004-2021 Artifex Software, Inc.
+// Copyright (C) 2004-2022 Artifex Software, Inc.
 //
 // This file is part of MuPDF.
 //
@@ -38,7 +38,7 @@ static void free_event_cb_data(fz_context *ctx, void *data)
 	}
 }
 
-static void event_cb(fz_context *ctx, pdf_document *doc, pdf_doc_event *event, void *data)
+static void event_cb(fz_context *ctx, pdf_document *pdf, pdf_doc_event *event, void *data)
 {
 	jobject jlistener = (jobject)data;
 	jboolean detach = JNI_FALSE;
@@ -53,17 +53,39 @@ static void event_cb(fz_context *ctx, pdf_document *doc, pdf_doc_event *event, v
 	case PDF_DOCUMENT_EVENT_ALERT:
 		{
 			pdf_alert_event *alert;
-			jstring jstring = NULL;
+			jstring jtitle = NULL;
+			jstring jmessage = NULL;
+			jstring jcheckboxmsg = NULL;
+			jobject jalertresult;
+			jobject jpdf;
 
 			alert = pdf_access_alert_event(ctx, event);
 
-			jstring = (*env)->NewStringUTF(env, alert->message);
-			if (!jstring || (*env)->ExceptionCheck(env))
+			jpdf = to_PDFDocument_safe(ctx, env, pdf);
+			if (!jpdf || (*env)->ExceptionCheck(env))
 				fz_throw_java_and_detach_thread(ctx, env, detach);
 
-			(*env)->CallVoidMethod(env, jlistener, mid_PDFDocument_JsEventListener_onAlert, jstring);
+			jtitle = (*env)->NewStringUTF(env, alert->message);
+			if (!jtitle || (*env)->ExceptionCheck(env))
+				fz_throw_java_and_detach_thread(ctx, env, detach);
+
+			jmessage = (*env)->NewStringUTF(env, alert->message);
+			if (!jmessage || (*env)->ExceptionCheck(env))
+				fz_throw_java_and_detach_thread(ctx, env, detach);
+
+			jcheckboxmsg = (*env)->NewStringUTF(env, alert->message);
+			if (!jcheckboxmsg || (*env)->ExceptionCheck(env))
+				fz_throw_java_and_detach_thread(ctx, env, detach);
+
+			jalertresult = (*env)->CallObjectMethod(env, jlistener, mid_PDFDocument_JsEventListener_onAlert, jpdf, jtitle, jmessage, alert->icon_type, alert->button_group_type, jcheckboxmsg, alert->initially_checked);
 			if ((*env)->ExceptionCheck(env))
 				fz_throw_java_and_detach_thread(ctx, env, detach);
+
+			if (jalertresult)
+			{
+				alert->button_pressed = (*env)->GetIntField(env, jalertresult, fid_AlertResult_buttonPressed);
+				alert->finally_checked = (*env)->GetBooleanField(env, jalertresult, fid_AlertResult_checkboxChecked);
+			}
 		}
 		break;
 
@@ -1437,4 +1459,117 @@ FUN(PDFDocument_setLanguage)(JNIEnv *env, jobject self, jint lang)
 		pdf_set_document_language(ctx, pdf, lang);
 	fz_catch(ctx)
 		jni_rethrow_void(env, ctx);
+}
+
+JNIEXPORT jint JNICALL
+FUN(PDFDocument_countSignatures)(JNIEnv *env, jobject self)
+{
+	fz_context *ctx = get_context(env);
+	pdf_document *pdf = from_PDFDocument_safe(env, self);
+	jint val = -1;
+
+	if (!ctx || !pdf) return -1;
+
+	fz_try(ctx)
+		val = pdf_count_signatures(ctx, pdf);
+	fz_catch(ctx)
+		jni_rethrow(env, ctx);
+
+	return val;
+}
+
+JNIEXPORT jobject JNICALL
+FUN(PDFDocument_addEmbeddedFile)(JNIEnv *env, jobject self, jstring jfilename, jstring jmimetype, jobject jcontents, jlong created, jlong modified, jboolean addChecksum)
+{
+	fz_context *ctx = get_context(env);
+	pdf_document *pdf = from_PDFDocument_safe(env, self);
+	const char *filename = NULL;
+	const char *mimetype = NULL;
+	fz_buffer *contents = from_Buffer(env, jcontents);
+	pdf_obj *fs = NULL;
+
+	if (!ctx || !pdf) return NULL;
+	if (!jfilename) jni_throw_arg(env, "filename must not be null");
+
+	filename = (*env)->GetStringUTFChars(env, jfilename, NULL);
+	if (!filename) return NULL;
+
+	if (jmimetype)
+	{
+		mimetype = (*env)->GetStringUTFChars(env, jmimetype, NULL);
+		if (!mimetype)
+		{
+			(*env)->ReleaseStringUTFChars(env, jfilename, filename);
+			return NULL;
+		}
+	}
+
+	fz_try(ctx)
+		fs = pdf_add_embedded_file(ctx, pdf, filename, mimetype, contents, created, modified, addChecksum);
+	fz_always(ctx)
+	{
+		if (mimetype)
+			(*env)->ReleaseStringUTFChars(env, jmimetype, mimetype);
+		(*env)->ReleaseStringUTFChars(env, jfilename, filename);
+	}
+	fz_catch(ctx)
+		jni_rethrow(env, ctx);
+
+	return to_PDFObject_safe(ctx, env, fs);
+}
+
+JNIEXPORT jstring JNICALL
+FUN(PDFDocument_getEmbeddedFileParams)(JNIEnv *env, jobject self, jobject jfs)
+{
+	fz_context *ctx = get_context(env);
+	pdf_obj *fs = from_PDFObject_safe(env, jfs);
+	pdf_embedded_file_params params;
+	jstring jfilename = NULL;
+	jstring jmimetype = NULL;
+
+	fz_try(ctx)
+		pdf_get_embedded_file_params(ctx, fs, &params);
+	fz_catch(ctx)
+		jni_rethrow(env, ctx);
+
+	jfilename = (*env)->NewStringUTF(env, params.filename);
+	if (!jfilename || (*env)->ExceptionCheck(env))
+		return NULL;
+
+	jmimetype = (*env)->NewStringUTF(env, params.mimetype);
+	if (!jmimetype || (*env)->ExceptionCheck(env))
+		return NULL;
+
+	return (*env)->NewObject(env, cls_PDFDocument_PDFEmbeddedFileParams, mid_PDFDocument_PDFEmbeddedFileParams_init,
+		jfilename, jmimetype, params.size, params.created * 1000, params.modified * 1000);
+}
+
+JNIEXPORT jobject JNICALL
+FUN(PDFDocument_loadEmbeddedFileContents)(JNIEnv *env, jobject self, jobject jfs)
+{
+	fz_context *ctx = get_context(env);
+	pdf_obj *fs = from_PDFObject_safe(env, jfs);
+	fz_buffer *contents = NULL;
+
+	fz_try(ctx)
+		contents = pdf_load_embedded_file_contents(ctx, fs);
+	fz_catch(ctx)
+		jni_rethrow(env, ctx);
+
+	return to_Buffer_safe(ctx, env, contents);
+}
+
+JNIEXPORT jboolean JNICALL
+FUN(PDFDocument_verifyEmbeddedFileChecksum)(JNIEnv *env, jobject self, jobject jfs)
+{
+	fz_context *ctx = get_context(env);
+	pdf_obj *fs = from_PDFObject_safe(env, jfs);
+	int valid = 0;
+
+	fz_try(ctx)
+		valid = pdf_verify_embedded_file_checksum(ctx, fs);
+	fz_catch(ctx)
+		jni_rethrow(env, ctx);
+
+	return valid ? JNI_TRUE : JNI_FALSE;
 }
