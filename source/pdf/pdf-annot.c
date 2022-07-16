@@ -565,7 +565,7 @@ pdf_create_link(fz_context *ctx, pdf_page *page, fz_rect bbox, const char *uri)
 		ind_obj = pdf_new_indirect(ctx, doc, ind_obj_num, 0);
 		pdf_array_push(ctx, annot_arr, ind_obj);
 
-		link = fz_new_link(ctx, bbox, uri);
+		link = (fz_link *) pdf_new_link(ctx, page, bbox, uri, annot_obj);
 
 		linkp = &page->links;
 
@@ -587,6 +587,47 @@ pdf_create_link(fz_context *ctx, pdf_page *page, fz_rect bbox, const char *uri)
 	}
 
 	return fz_keep_link(ctx, link);
+}
+
+void pdf_delete_link(fz_context *ctx, pdf_page *page, fz_link *link)
+{
+	fz_link **linkptr;
+	pdf_obj *annots;
+	int i;
+
+	if (link == NULL || page == NULL || page != ((pdf_link *) link)->page)
+		return;
+
+	for (linkptr = &page->links; *linkptr; linkptr = &((*linkptr)->next))
+	{
+		if (*linkptr == link)
+			break;
+	}
+
+	if (*linkptr == NULL)
+		return;
+
+	pdf_begin_operation(ctx, page->doc, "Delete Link");
+
+	fz_try(ctx)
+	{
+
+		annots = pdf_dict_get(ctx, page->obj, PDF_NAME(Annots));
+		i = pdf_array_find(ctx, annots, ((pdf_link *) link)->obj);
+		if (i >= 0)
+			pdf_array_delete(ctx, annots, i);
+		*linkptr = link->next;
+		link->next = NULL;
+		fz_drop_link(ctx, link);
+	}
+	fz_always(ctx)
+	{
+		pdf_end_operation(ctx, page->doc);
+	}
+	fz_catch(ctx)
+	{
+		fz_rethrow(ctx);
+	}
 }
 
 static pdf_obj *
@@ -760,40 +801,30 @@ pdf_create_annot(fz_context *ctx, pdf_page *page, enum pdf_annot_type type)
 }
 
 static int
-remove_from_tree(fz_context *ctx, pdf_obj *arr, pdf_obj *item)
+remove_from_tree(fz_context *ctx, pdf_obj *arr, pdf_obj *item, pdf_cycle_list *cycle_up)
 {
+	pdf_cycle_list cycle;
 	int i, n, res = 0;
 
-	if (arr == NULL || pdf_mark_obj(ctx, arr))
+	if (arr == NULL || pdf_cycle(ctx, &cycle, cycle_up, arr))
 		return 0;
 
-	fz_try(ctx)
+	n = pdf_array_len(ctx, arr);
+	for (i = 0; i < n; ++i)
 	{
-		n = pdf_array_len(ctx, arr);
-		for (i = 0; i < n; ++i)
+		pdf_obj *obj = pdf_array_get(ctx, arr, i);
+		if (obj == item)
 		{
-			pdf_obj *obj = pdf_array_get(ctx, arr, i);
-			if (obj == item)
-			{
-				pdf_array_delete(ctx, arr, i);
-				res = 1;
-				break;
-			}
-
-			if (remove_from_tree(ctx, pdf_dict_get(ctx, obj, PDF_NAME(Kids)), item))
-			{
-				res = 1;
-				break;
-			}
+			pdf_array_delete(ctx, arr, i);
+			res = 1;
+			break;
 		}
-	}
-	fz_always(ctx)
-	{
-		pdf_unmark_obj(ctx, arr);
-	}
-	fz_catch(ctx)
-	{
-		fz_rethrow(ctx);
+
+		if (remove_from_tree(ctx, pdf_dict_get(ctx, obj, PDF_NAME(Kids)), item, &cycle))
+		{
+			res = 1;
+			break;
+		}
 	}
 
 	return res;
@@ -873,7 +904,7 @@ pdf_delete_annot(fz_context *ctx, pdf_page *page, pdf_annot *annot)
 			pdf_obj *root = pdf_dict_get(ctx, pdf_trailer(ctx, doc), PDF_NAME(Root));
 			pdf_obj *acroform = pdf_dict_get(ctx, root, PDF_NAME(AcroForm));
 			pdf_obj *fields = pdf_dict_get(ctx, acroform, PDF_NAME(Fields));
-			(void)remove_from_tree(ctx, fields, annot->obj);
+			(void)remove_from_tree(ctx, fields, annot->obj, NULL);
 		}
 
 		/* The garbage collection pass when saving will remove the annot object,
@@ -1910,7 +1941,7 @@ pdf_set_annot_vertices(fz_context *ctx, pdf_annot *annot, int n, const fz_point 
 
 void pdf_clear_annot_vertices(fz_context *ctx, pdf_annot *annot)
 {
-	pdf_annot_push_local_xref(ctx, annot);
+	begin_annot_op(ctx, annot, "Clear vertices");
 
 	fz_try(ctx)
 	{
@@ -1918,7 +1949,7 @@ void pdf_clear_annot_vertices(fz_context *ctx, pdf_annot *annot)
 		pdf_dict_del(ctx, annot->obj, PDF_NAME(Vertices));
 	}
 	fz_always(ctx)
-		pdf_annot_pop_local_xref(ctx, annot);
+		end_annot_op(ctx, annot);
 	fz_catch(ctx)
 		fz_rethrow(ctx);
 
@@ -2305,12 +2336,12 @@ pdf_set_annot_ink_list(fz_context *ctx, pdf_annot *annot, int n, const int *coun
 void
 pdf_clear_annot_ink_list(fz_context *ctx, pdf_annot *annot)
 {
-	pdf_annot_push_local_xref(ctx, annot);
+	begin_annot_op(ctx, annot, "Clear ink list");
 
 	fz_try(ctx)
 		pdf_dict_del(ctx, annot->obj, PDF_NAME(InkList));
 	fz_always(ctx)
-		pdf_annot_pop_local_xref(ctx, annot);
+		end_annot_op(ctx, annot);
 	fz_catch(ctx)
 		fz_rethrow(ctx);
 

@@ -1538,7 +1538,7 @@ pdf_filter_d1(fz_context *ctx, pdf_processor *proc, float wx, float wy, float ll
 static void
 set_default_cs_values(pdf_filter_gstate_sc *sc, const char *name, fz_colorspace *cs)
 {
-	int n = cs->n;
+	int n = cs ? cs->n : 0;
 	int i;
 	if (strcmp(name, "Separation") == 0 || strcmp(name, "DeviceN") == 0) {
 		for (i = 0; i < n; ++i)
@@ -1839,7 +1839,7 @@ pdf_filter_Do_form(fz_context *ctx, pdf_processor *proc, const char *name, pdf_o
 		char buf[40];
 		create_resource_name(ctx, p, PDF_NAME(XObject), "Fm", buf, sizeof buf);
 		transform = fz_concat(p->gstate->sent.ctm, p->transform);
-		new_xobj = pdf_filter_xobject_instance(ctx, xobj, page_resources, transform, p->filter);
+		new_xobj = pdf_filter_xobject_instance(ctx, xobj, page_resources, transform, p->filter, NULL);
 		fz_try(ctx)
 		{
 			add_resource(ctx, p, PDF_NAME(XObject), buf, new_xobj);

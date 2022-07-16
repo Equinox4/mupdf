@@ -254,6 +254,8 @@ xps_lookup_font(fz_context *ctx, xps_document *doc, char *base_uri, char *font_u
 			{
 				if (doc->cookie)
 					doc->cookie->incomplete = 1;
+				else
+					fz_rethrow(ctx);
 			}
 			else
 				fz_warn(ctx, "cannot find font resource part '%s'", partname);
@@ -544,7 +546,7 @@ xps_parse_glyphs(fz_context *ctx, xps_document *doc, fz_matrix ctm,
 	int is_sideways = 0;
 	int bidi_level = 0;
 
-	fz_text *text;
+	fz_text *text = NULL;
 	fz_rect area;
 
 	/*
@@ -611,6 +613,8 @@ xps_parse_glyphs(fz_context *ctx, xps_document *doc, fz_matrix ctm,
 	font = xps_lookup_font(ctx, doc, base_uri, font_uri_att, style_att);
 	if (!font)
 		font = fz_new_base14_font(ctx, "Times-Roman");
+
+	fz_var(text);
 
 	fz_try(ctx)
 	{

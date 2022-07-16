@@ -428,8 +428,10 @@ struct pdf_document
 	int has_old_style_xrefs;
 	int has_linearization_object;
 
-	int rev_page_count;
+	int page_map_nesting;
+	int map_page_count;
 	pdf_rev_page_map *rev_page_map;
+	int *fwd_page_map;
 
 	int repair_attempted;
 	int repair_in_progress;
@@ -488,6 +490,7 @@ struct pdf_document
 	int num_type3_fonts;
 	int max_type3_fonts;
 	fz_font **type3_fonts;
+	int type3_lock;
 
 	struct {
 		fz_hash_table *fonts;

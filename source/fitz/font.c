@@ -1,4 +1,4 @@
-// Copyright (C) 2004-2021 Artifex Software, Inc.
+// Copyright (C) 2004-2022 Artifex Software, Inc.
 //
 // This file is part of MuPDF.
 //
@@ -1361,7 +1361,7 @@ fz_outline_ft_glyph(fz_context *ctx, fz_font *font, int gid, fz_matrix trm)
 	FT_Face face = font->ft_face;
 	int fterr;
 
-	const int scale = face->units_per_EM;
+	const int scale = 65536;
 	const float recip = 1.0f / scale;
 	const float strength = 0.02f;
 
@@ -1372,10 +1372,14 @@ fz_outline_ft_glyph(fz_context *ctx, fz_font *font, int gid, fz_matrix trm)
 
 	fz_lock(ctx, FZ_LOCK_FREETYPE);
 
-	fterr = FT_Load_Glyph(face, gid, FT_LOAD_NO_SCALE | FT_LOAD_IGNORE_TRANSFORM);
+	fterr = FT_Set_Char_Size(face, scale, scale, 72, 72);
+	if (fterr)
+		fz_warn(ctx, "FT_Set_Char_Size(%s,%d,72): %s", font->name, scale, ft_error_string(fterr));
+
+	fterr = FT_Load_Glyph(face, gid, FT_LOAD_IGNORE_TRANSFORM);
 	if (fterr)
 	{
-		fz_warn(ctx, "FT_Load_Glyph(%s,%d,FT_LOAD_NO_SCALE|FT_LOAD_IGNORE_TRANSFORM): %s", font->name, gid, ft_error_string(fterr));
+		fz_warn(ctx, "FT_Load_Glyph(%s,%d,FT_LOAD_IGNORE_TRANSFORM): %s", font->name, gid, ft_error_string(fterr));
 		fz_unlock(ctx, FZ_LOCK_FREETYPE);
 		return NULL;
 	}
@@ -1475,13 +1479,8 @@ fz_bound_t3_glyph(fz_context *ctx, fz_font *font, int gid)
 void
 fz_prepare_t3_glyph(fz_context *ctx, fz_font *font, int gid)
 {
-	fz_buffer *contents;
 	fz_device *dev;
 	fz_rect d1_rect;
-
-	contents = font->t3procs[gid];
-	if (!contents)
-		return;
 
 	/* We've not already loaded this one! */
 	assert(font->t3lists[gid] == NULL);
@@ -1498,14 +1497,9 @@ fz_prepare_t3_glyph(fz_context *ctx, fz_font *font, int gid)
 			FZ_DEVFLAG_MITERLIMIT_UNDEFINED |
 			FZ_DEVFLAG_LINEWIDTH_UNDEFINED;
 
-	/* Avoid cycles in glyph content streams referring to the glyph itself.
-	 * Remember to restore the content stream below, regardless of exceptions
-	 * or a successful run of the glyph. */
-	font->t3procs[gid] = NULL;
-
 	fz_try(ctx)
 	{
-		font->t3run(ctx, font->t3doc, font->t3resources, contents, dev, fz_identity, NULL, NULL);
+		font->t3run(ctx, font->t3doc, font->t3resources, font->t3procs[gid], dev, fz_identity, NULL, NULL);
 		fz_close_device(ctx, dev);
 		font->t3flags[gid] = dev->flags;
 		d1_rect = dev->d1_rect;
@@ -1513,7 +1507,6 @@ fz_prepare_t3_glyph(fz_context *ctx, fz_font *font, int gid)
 	fz_always(ctx)
 	{
 		fz_drop_device(ctx, dev);
-		font->t3procs[gid] = contents;
 	}
 	fz_catch(ctx)
 		fz_rethrow(ctx);
@@ -1652,13 +1645,8 @@ void
 fz_render_t3_glyph_direct(fz_context *ctx, fz_device *dev, fz_font *font, int gid, fz_matrix trm, void *gstate, fz_default_colorspaces *def_cs)
 {
 	fz_matrix ctm;
-	void *contents;
 
 	if (gid < 0 || gid > 255)
-		return;
-
-	contents = font->t3procs[gid];
-	if (!contents)
 		return;
 
 	if (font->t3flags[gid] & FZ_DEVFLAG_MASK)
@@ -1671,20 +1659,8 @@ fz_render_t3_glyph_direct(fz_context *ctx, fz_device *dev, fz_font *font, int gi
 		fz_warn(ctx, "type3 glyph doesn't specify masked or colored");
 	}
 
-	/* Avoid cycles in glyph content streams referring to the glyph itself.
-	 * Remember to restore the content stream below, regardless of exceptions
-	 * or a successful run of the glyph. */
-	font->t3procs[gid] = NULL;
-
-	fz_try(ctx)
-	{
-		ctm = fz_concat(font->t3matrix, trm);
-		font->t3run(ctx, font->t3doc, font->t3resources, contents, dev, ctm, gstate, def_cs);
-	}
-	fz_always(ctx)
-		font->t3procs[gid] = contents;
-	fz_catch(ctx)
-		fz_rethrow(ctx);
+	ctm = fz_concat(font->t3matrix, trm);
+	font->t3run(ctx, font->t3doc, font->t3resources, font->t3procs[gid], dev, ctm, gstate, def_cs);
 }
 
 fz_rect

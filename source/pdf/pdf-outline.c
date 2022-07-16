@@ -1,4 +1,4 @@
-// Copyright (C) 2004-2021 Artifex Software, Inc.
+// Copyright (C) 2004-2022 Artifex Software, Inc.
 //
 // This file is part of MuPDF.
 //
@@ -24,6 +24,7 @@
 #include "mupdf/pdf.h"
 
 #include <string.h>
+#include <math.h>
 
 /*
 	The URI encoding format broadly follows that described in
@@ -34,7 +35,7 @@
 */
 
 static void
-pdf_test_outline(fz_context *ctx, pdf_document *doc, pdf_obj *dict, pdf_mark_list *mark_list, pdf_obj *parent, int *fixed)
+pdf_test_outline(fz_context *ctx, pdf_document *doc, pdf_obj *dict, pdf_mark_bits *marks, pdf_obj *parent, int *fixed)
 {
 	int parent_diff, prev_diff, last_diff;
 	pdf_obj *first, *last, *next, *prev;
@@ -45,7 +46,7 @@ pdf_test_outline(fz_context *ctx, pdf_document *doc, pdf_obj *dict, pdf_mark_lis
 
 	while (dict && pdf_is_dict(ctx, dict))
 	{
-		if (pdf_mark_list_push(ctx, mark_list, dict))
+		if (pdf_mark_bits_set(ctx, marks, dict))
 			fz_throw(ctx, FZ_ERROR_GENERIC, "Cycle detected in outlines");
 
 		parent = pdf_dict_get(ctx, dict, PDF_NAME(Parent));
@@ -92,7 +93,7 @@ pdf_test_outline(fz_context *ctx, pdf_document *doc, pdf_obj *dict, pdf_mark_lis
 
 		first = pdf_dict_get(ctx, dict, PDF_NAME(First));
 		if (first)
-			pdf_test_outline(ctx, doc, first, mark_list, dict, fixed);
+			pdf_test_outline(ctx, doc, first, marks, dict, fixed);
 
 		expected_prev = dict;
 		dict = next;
@@ -497,13 +498,13 @@ pdf_outline_iterator_drop(fz_context *ctx, fz_outline_iterator *iter_)
 fz_outline_iterator *pdf_new_outline_iterator(fz_context *ctx, pdf_document *doc)
 {
 	pdf_obj *root, *obj, *first;
-	pdf_mark_list mark_list;
+	pdf_mark_bits *marks;
 	pdf_outline_iterator *iter = NULL;
 	int fixed = 0;
 
 	/* Walk the outlines to spot problems that might bite us later
 	 * (in particular, for cycles). */
-	pdf_mark_list_init(ctx, &mark_list);
+	marks = pdf_new_mark_bits(ctx, doc);
 	fz_try(ctx)
 	{
 		root = pdf_dict_get(ctx, pdf_trailer(ctx, doc), PDF_NAME(Root));
@@ -516,14 +517,14 @@ fz_outline_iterator *pdf_new_outline_iterator(fz_context *ctx, pdf_document *doc
 			fz_try(ctx)
 			{
 				/* Pass through the outlines once, fixing inconsistencies */
-				pdf_test_outline(ctx, doc, first, &mark_list, obj, &fixed);
+				pdf_test_outline(ctx, doc, first, marks, obj, &fixed);
 
 				if (fixed)
 				{
 					/* If a fix was performed, pass through again,
-					this time throwing if it's still not correct. */
-					pdf_mark_list_free(ctx, &mark_list);
-					pdf_test_outline(ctx, doc, first, &mark_list, obj, NULL);
+					 * this time throwing if it's still not correct. */
+					pdf_mark_bits_reset(ctx, marks);
+					pdf_test_outline(ctx, doc, first, marks, obj, NULL);
 				}
 			}
 			fz_always(ctx)
@@ -537,7 +538,7 @@ fz_outline_iterator *pdf_new_outline_iterator(fz_context *ctx, pdf_document *doc
 		}
 	}
 	fz_always(ctx)
-		pdf_mark_list_free(ctx, &mark_list);
+		pdf_drop_mark_bits(ctx, marks);
 	fz_catch(ctx)
 		fz_rethrow(ctx);
 
@@ -620,29 +621,50 @@ pdf_new_destination_from_link(fz_context *ctx, pdf_document *doc, const char *ur
 		case FZ_LINK_DEST_FIT_H:
 			p = fz_transform_point_xy(0, val.y, invctm);
 			pdf_array_push(ctx, dest, PDF_NAME(FitH));
-			pdf_array_push_real(ctx, dest, p.y);
+			if (isnan(p.y))
+				pdf_array_push(ctx, dest, PDF_NULL);
+			else
+				pdf_array_push_real(ctx, dest, p.y);
 			break;
 		case FZ_LINK_DEST_FIT_BH:
 			p = fz_transform_point_xy(0, val.y, invctm);
 			pdf_array_push(ctx, dest, PDF_NAME(FitBH));
-			pdf_array_push_real(ctx, dest, p.y);
+			if (isnan(p.y))
+				pdf_array_push(ctx, dest, PDF_NULL);
+			else
+				pdf_array_push_real(ctx, dest, p.y);
 			break;
 		case FZ_LINK_DEST_FIT_V:
 			p = fz_transform_point_xy(val.x, 0, invctm);
 			pdf_array_push(ctx, dest, PDF_NAME(FitV));
-			pdf_array_push_real(ctx, dest, p.x);
+			if (isnan(p.x))
+				pdf_array_push(ctx, dest, PDF_NULL);
+			else
+				pdf_array_push_real(ctx, dest, p.x);
 			break;
 		case FZ_LINK_DEST_FIT_BV:
 			p = fz_transform_point_xy(val.x, 0, invctm);
 			pdf_array_push(ctx, dest, PDF_NAME(FitBV));
-			pdf_array_push_real(ctx, dest, p.x);
+			if (isnan(p.x))
+				pdf_array_push(ctx, dest, PDF_NULL);
+			else
+				pdf_array_push_real(ctx, dest, p.x);
 			break;
 		case FZ_LINK_DEST_XYZ:
 			p = fz_transform_point_xy(val.x, val.y, invctm);
 			pdf_array_push(ctx, dest, PDF_NAME(XYZ));
-			pdf_array_push_real(ctx, dest, p.x);
-			pdf_array_push_real(ctx, dest, p.y);
-			pdf_array_push_real(ctx, dest, val.zoom / 100);
+			if (isnan(p.x))
+				pdf_array_push(ctx, dest, PDF_NULL);
+			else
+				pdf_array_push_real(ctx, dest, p.x);
+			if (isnan(p.y))
+				pdf_array_push(ctx, dest, PDF_NULL);
+			else
+				pdf_array_push_real(ctx, dest, p.y);
+			if (isnan(val.zoom))
+				pdf_array_push(ctx, dest, PDF_NULL);
+			else
+				pdf_array_push_real(ctx, dest, val.zoom / 100);
 			break;
 		case FZ_LINK_DEST_FIT_R:
 			r.x0 = val.x;
